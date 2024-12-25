@@ -3,7 +3,6 @@ import PropTypes from 'prop-types'
 import React, { Component } from 'react'
 import styled, { css } from 'styled-components'
 
-import { SizeMe } from 'react-sizeme'
 import { FixedSizeList } from 'react-window'
 
 import { TooltipAnchor } from './tooltip/TooltipAnchor'
@@ -223,6 +222,23 @@ export class Grid extends Component {
   list = React.createRef()
   /* eslint-enable react/sort-comp */
 
+  state = {
+    availableWidth: 0,
+  }
+
+  componentDidMount() {
+    this.resizeObserver = new ResizeObserver(entries => {
+      for (let entry of entries) {
+        this.setState({ availableWidth: entry.contentRect.width })
+      }
+    })
+    this.resizeObserver.observe(this.gridElement.current)
+  }
+
+  componentWillUnmount() {
+    this.resizeObserver.disconnect()
+  }
+
   // https://www.w3.org/TR/wai-aria-practices/#kbd_roving_tabindex
   onFocus = e => {
     const targetElement = e.target
@@ -367,6 +383,8 @@ export class Grid extends Component {
       ...rest
     } = this.props
 
+    const { availableWidth } = this.state
+
     const columns = inputColumns.map(column => {
       const columnDefaults = {
         grow: 1,
@@ -391,6 +409,16 @@ export class Grid extends Component {
       return sortOrder
     }
 
+    const minGridWidth = columns.reduce((sum, col) => sum + col.minWidth, 0)
+    const remainingWidth = Math.max(availableWidth - minGridWidth, 0)
+
+    const totalGrowFactors = columns.reduce((sum, col) => sum + col.grow, 0) || 1
+    const gridWidth = Math.max(availableWidth, minGridWidth)
+
+    const columnWidths = columns.map(
+      col => col.minWidth + (col.grow / totalGrowFactors) * remainingWidth
+    )
+
     return (
       <GridWrapper
         {...rest}
@@ -405,99 +433,82 @@ export class Grid extends Component {
           onHoverRow(null)
         }}
       >
-        <SizeMe>
-          {({ size }) => {
-            const availableWidth = size.width
-            const minGridWidth = columns.reduce((sum, col) => sum + col.minWidth, 0)
-            const remainingWidth = Math.max(availableWidth - minGridWidth, 0)
+        <GridHorizontalViewport>
+          <HeaderRow aria-rowindex={1} height={rowHeight} role="row">
+            {columns.map((column, columnIndex) => {
+              let content = column.heading
+              if (column.tooltip) {
+                content = <TooltipHint>{content}</TooltipHint>
+              }
+              if (column.isSortable) {
+                content = (
+                  <button
+                    tabIndex={-1}
+                    type="button"
+                    onClick={() => onRequestSort(column.key)}
+                  >
+                    {content}
+                  </button>
+                )
+              } else {
+                content = <span>{content}</span>
+              }
+              if (column.tooltip) {
+                content = (
+                  <TooltipAnchor
+                    tooltip={column.tooltip}
+                    tooltipComponent={GridHeadingTooltip}
+                  >
+                    {content}
+                  </TooltipAnchor>
+                )
+              }
 
-            const totalGrowFactors = columns.reduce((sum, col) => sum + col.grow, 0) || 1
-            const gridWidth = Math.max(availableWidth, minGridWidth)
-
-            const columnWidths = columns.map(
-              col => col.minWidth + (col.grow / totalGrowFactors) * remainingWidth
-            )
-
-            return (
-              <GridHorizontalViewport>
-                <HeaderRow aria-rowindex={1} height={rowHeight} role="row">
-                  {columns.map((column, columnIndex) => {
-                    let content = column.heading
-                    if (column.tooltip) {
-                      content = <TooltipHint>{content}</TooltipHint>
-                    }
-                    if (column.isSortable) {
-                      content = (
-                        <button
-                          tabIndex={-1}
-                          type="button"
-                          onClick={() => onRequestSort(column.key)}
-                        >
-                          {content}
-                        </button>
-                      )
-                    } else {
-                      content = <span>{content}</span>
-                    }
-                    if (column.tooltip) {
-                      content = (
-                        <TooltipAnchor
-                          tooltip={column.tooltip}
-                          tooltipComponent={GridHeadingTooltip}
-                        >
-                          {content}
-                        </TooltipAnchor>
-                      )
-                    }
-
-                    return (
-                      <ColumnHeader
-                        key={column.key}
-                        aria-colindex={columnIndex + 1}
-                        aria-sort={ariaSortAttr(column)}
-                        data-cell={`${columnIndex},0`}
-                        role="columnheader"
-                        tabIndex={-1}
-                        width={columnWidths[columnIndex]}
-                      >
-                        {content}
-                      </ColumnHeader>
-                    )
-                  })}
-                </HeaderRow>
-                <FixedSizeList
-                  // With height = numRowsRendered * rowHeight, when scrolled to an offset
-                  // which is an exact multiple of rowHeight, onItemsRendered's stopIndex
-                  // will be the index of the row after the last row visible. Subtracting
-                  // one pixel from the height prevents this.
-                  height={numRowsRendered * rowHeight - 1}
-                  itemCount={data.length}
-                  itemData={{
-                    cellData,
-                    columns,
-                    columnWidths,
-                    data,
-                    focusedCell: this.focusedCell,
-                    onMouseEnter: this.onMouseEnterRow,
-                    shouldHighlightRow,
-                  }}
-                  itemKey={rowIndex => rowKey(data[rowIndex])}
-                  itemSize={rowHeight}
-                  overscanCount={10}
-                  ref={this.list}
-                  style={{
-                    overflowX: 'hidden',
-                  }}
-                  width={gridWidth}
-                  onItemsRendered={this.onItemsRendered}
-                  onScroll={onScroll}
+              return (
+                <ColumnHeader
+                  key={column.key}
+                  aria-colindex={columnIndex + 1}
+                  aria-sort={ariaSortAttr(column)}
+                  data-cell={`${columnIndex},0`}
+                  role="columnheader"
+                  tabIndex={-1}
+                  width={columnWidths[columnIndex]}
                 >
-                  {DataRow}
-                </FixedSizeList>
-              </GridHorizontalViewport>
-            )
-          }}
-        </SizeMe>
+                  {content}
+                </ColumnHeader>
+              )
+            })}
+          </HeaderRow>
+          <FixedSizeList
+            // With height = numRowsRendered * rowHeight, when scrolled to an offset
+            // which is an exact multiple of rowHeight, onItemsRendered's stopIndex
+            // will be the index of the row after the last row visible. Subtracting
+            // one pixel from the height prevents this.
+            height={numRowsRendered * rowHeight - 1}
+            itemCount={data.length}
+            itemData={{
+              cellData,
+              columns,
+              columnWidths,
+              data,
+              focusedCell: this.focusedCell,
+              onMouseEnter: this.onMouseEnterRow,
+              shouldHighlightRow,
+            }}
+            itemKey={rowIndex => rowKey(data[rowIndex])}
+            itemSize={rowHeight}
+            overscanCount={10}
+            ref={this.list}
+            style={{
+              overflowX: 'hidden',
+            }}
+            width={gridWidth}
+            onItemsRendered={this.onItemsRendered}
+            onScroll={onScroll}
+          >
+            {DataRow}
+          </FixedSizeList>
+        </GridHorizontalViewport>
       </GridWrapper>
     )
   }
